@@ -3,8 +3,22 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { sendBatchEmails } from '@/lib/email-service'
 
 // Generate tracking pixel URL
+// Generate tracking pixel URL
 function getTrackingPixel(campaignId: string, contactId: string): string {
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    let baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+
+    // Robustness: Handle users pasting full URLs with paths (e.g. /admin/dashboard)
+    try {
+        if (!baseUrl.startsWith('http')) {
+            baseUrl = `https://${baseUrl}`
+        }
+        const url = new URL(baseUrl)
+        baseUrl = url.origin // Returns just https://domain.com without trailing slash or path
+    } catch (e) {
+        // If invalid URL, fallback to raw value but trim trailing slash
+        baseUrl = baseUrl.replace(/\/$/, '')
+    }
+
     return `<img src="${baseUrl}/api/track/open?cid=${campaignId}&uid=${contactId}" width="1" height="1" style="display:none;" alt="" />`
 }
 
