@@ -1,16 +1,20 @@
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(req: NextRequest) {
-    const body = await req.json()
+    let body: any
+    try {
+        body = await req.json()
+    } catch {
+        return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+    }
+
     const { type, data } = body
-    const supabase = await createClient()
+    console.log('[Webhook] Received:', type, JSON.stringify(data, null, 2))
 
-    // 1. Validate Signature (Mocked for now)
-    // const signature = req.headers.get('x-webhook-signature')
-    // if (!isValid(signature)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    // Use admin client to bypass RLS
+    const supabase = createAdminClient()
 
-    // 2. Process Event
     if (!type || !data) {
         return NextResponse.json({ error: 'Invalid Payload' }, { status: 400 })
     }
@@ -28,60 +32,98 @@ export async function POST(req: NextRequest) {
     const dbEventType = eventTypeMap[type] || 'unknown'
 
     if (dbEventType === 'unknown') {
+        console.log('[Webhook] Unhandled event type:', type)
         return NextResponse.json({ success: true, message: 'Unhandled event type' })
     }
 
     try {
-        // Find contact by email
-        const recipientEmail = data.to?.[0]
-        if (!recipientEmail) {
-            return NextResponse.json({ success: true, message: 'No recipient email' })
+        // Extract recipient email - Resend can send it in different formats
+        let recipientEmail: string | null = null
+
+        if (data.to) {
+            if (typeof data.to === 'string') {
+                recipientEmail = data.to
+            } else if (Array.isArray(data.to) && data.to.length > 0) {
+                // Could be array of strings or array of objects
+                const first = data.to[0]
+                recipientEmail = typeof first === 'string' ? first : first?.email
+            }
         }
 
-        const { data: contact } = await supabase
-            .from('contacts')
-            .select('id')
-            .eq('email', recipientEmail)
-            .single()
-
-        if (!contact) {
-            console.log(`[Webhook] Contact not found for email: ${recipientEmail}`)
-            return NextResponse.json({ success: true, message: 'Contact not found' })
+        // Also try data.email for opened/clicked events
+        if (!recipientEmail && data.email) {
+            recipientEmail = data.email
         }
 
-        // Extract campaign_id from tags
-        const campaignTag = data.tags?.find((t: any) => t.name === 'campaign_id')
-        const campaignId = campaignTag?.value
+        console.log('[Webhook] Recipient email:', recipientEmail)
 
-        // Insert granular event record
-        const eventPayload: any = {
-            contact_id: contact.id,
-            event_type: dbEventType,
-            event_data: data,
-            timestamp: new Date(data.created_at || Date.now()).toISOString()
+        // Extract campaign_id from tags - Resend sends tags as object, not array
+        let campaignId: string | null = null
+
+        if (data.tags) {
+            if (typeof data.tags === 'object' && !Array.isArray(data.tags)) {
+                // Object format: { campaign_id: "uuid" }
+                campaignId = data.tags.campaign_id || null
+            } else if (Array.isArray(data.tags)) {
+                // Array format: [{ name: "campaign_id", value: "uuid" }]
+                const tag = data.tags.find((t: any) => t.name === 'campaign_id')
+                campaignId = tag?.value || null
+            }
         }
 
+        console.log('[Webhook] Campaign ID:', campaignId)
+
+        // Find contact by email (if we have one)
+        let contactId: string | null = null
+
+        if (recipientEmail) {
+            const { data: contact } = await supabase
+                .from('contacts')
+                .select('id')
+                .eq('email', recipientEmail)
+                .single()
+
+            if (contact) {
+                contactId = contact.id
+            } else {
+                console.log('[Webhook] Contact not found for:', recipientEmail)
+            }
+        }
+
+        // Insert event record (even if we don't have a contact, for debugging)
         if (campaignId) {
-            eventPayload.campaign_id = campaignId
-        }
+            const eventPayload: any = {
+                campaign_id: campaignId,
+                event_type: dbEventType,
+                event_data: data,
+                timestamp: new Date(data.created_at || Date.now()).toISOString()
+            }
 
-        await supabase.from('email_events').insert(eventPayload)
+            if (contactId) {
+                eventPayload.contact_id = contactId
+            }
 
-        // Update campaign aggregate stats if we have a campaign_id
-        if (campaignId) {
-            await updateCampaignStats(supabase, campaignId, contact.id, dbEventType, data)
+            const { error: insertError } = await supabase.from('email_events').insert(eventPayload)
+            if (insertError) {
+                console.error('[Webhook] Insert error:', insertError)
+            } else {
+                console.log('[Webhook] Event recorded:', dbEventType)
+            }
+
+            // Update campaign aggregate stats
+            await updateCampaignStats(supabase, campaignId, contactId, dbEventType)
         }
 
         // Track link clicks specifically
-        if (dbEventType === 'clicked' && data.link && campaignId) {
+        if (dbEventType === 'clicked' && data.link && campaignId && contactId) {
             await supabase.from('email_link_clicks').insert({
                 campaign_id: campaignId,
-                contact_id: contact.id,
+                contact_id: contactId,
                 link_url: data.link
             })
         }
 
-        return NextResponse.json({ success: true })
+        return NextResponse.json({ success: true, event: dbEventType, campaignId, contactId })
 
     } catch (err: any) {
         console.error('[Webhook] Error processing event:', err)
@@ -91,56 +133,38 @@ export async function POST(req: NextRequest) {
 
 /**
  * Update campaign aggregate statistics
- * Handles both total and unique counts
  */
 async function updateCampaignStats(
     supabase: any,
     campaignId: string,
-    contactId: string,
-    eventType: string,
-    eventData: any
+    contactId: string | null,
+    eventType: string
 ) {
-    // Check if this is a unique event (first time for this contact+campaign+event_type)
-    const { data: existingEvent } = await supabase
-        .from('email_events')
-        .select('id')
-        .eq('campaign_id', campaignId)
-        .eq('contact_id', contactId)
-        .eq('event_type', eventType)
-        .limit(2) // We just inserted one, so check if there's more than 1
-
-    const isUnique = !existingEvent || existingEvent.length <= 1
-
-    // Build update object based on event type
-    const updateFields: Record<string, any> = {}
-
-    switch (eventType) {
-        case 'opened':
-            updateFields.total_opens = supabase.rpc ? undefined : 1 // Increment happens below
-            if (isUnique) {
-                // We need to increment, use raw SQL via update
-            }
-            break
-        case 'clicked':
-            if (isUnique) {
-                // Track unique clicks
-            }
-            break
-        case 'bounced':
-            break
-        case 'complained':
-            break
-    }
-
-    // Use RPC or raw increment - Supabase doesn't support increment directly in update
-    // So we fetch current values and increment
+    // Fetch current campaign stats
     const { data: campaign } = await supabase
         .from('email_campaigns')
         .select('total_opens, total_clicks, total_bounces, total_complaints, unique_opens, unique_clicks')
         .eq('id', campaignId)
         .single()
 
-    if (!campaign) return
+    if (!campaign) {
+        console.log('[Webhook] Campaign not found:', campaignId)
+        return
+    }
+
+    // Check if this is a unique event
+    let isUnique = true
+    if (contactId) {
+        const { data: existingEvents } = await supabase
+            .from('email_events')
+            .select('id')
+            .eq('campaign_id', campaignId)
+            .eq('contact_id', contactId)
+            .eq('event_type', eventType)
+            .limit(2)
+
+        isUnique = !existingEvents || existingEvents.length <= 1
+    }
 
     const updates: Record<string, number> = {}
 
@@ -166,9 +190,15 @@ async function updateCampaignStats(
     }
 
     if (Object.keys(updates).length > 0) {
-        await supabase
+        const { error } = await supabase
             .from('email_campaigns')
             .update(updates)
             .eq('id', campaignId)
+
+        if (error) {
+            console.error('[Webhook] Update error:', error)
+        } else {
+            console.log('[Webhook] Campaign stats updated:', updates)
+        }
     }
 }
