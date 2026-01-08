@@ -68,8 +68,15 @@ export default function DashboardPage() {
             .order('date', { ascending: true })
             .limit(3)
 
-        let totalOpens = 0
-        campaigns?.forEach(c => { totalOpens += c.total_opens || 0 })
+        // Query email_events for accurate Total Opens count
+        const { data: openEvents } = await supabase
+            .from('email_events')
+            .select('contact_id')
+            .eq('event_type', 'opened')
+
+        // Count unique contacts who opened any email
+        const uniqueOpeners = new Set(openEvents?.map(e => e.contact_id) || [])
+        const totalOpens = uniqueOpeners.size
 
         setStats({
             contacts: contactsRes.count || 0,
@@ -258,7 +265,7 @@ export default function DashboardPage() {
                                         className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-50/80 transition-colors group"
                                     >
                                         <div className={`w-2 h-2 rounded-full ${campaign.status === 'sent' ? 'bg-emerald-500' :
-                                                campaign.status === 'draft' ? 'bg-slate-300' : 'bg-amber-500'
+                                            campaign.status === 'draft' ? 'bg-slate-300' : 'bg-amber-500'
                                             }`} />
                                         <div className="flex-1 min-w-0">
                                             <p className="font-medium text-[13px] text-slate-700 truncate tracking-[-0.01em]">{campaign.name}</p>

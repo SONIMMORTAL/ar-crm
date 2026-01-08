@@ -88,21 +88,54 @@ export default function AnalyticsPage() {
                 .select('*', { count: 'exact', head: true })
                 .eq('status', 'sent')
 
-            // 2. Fetch sent campaigns with stats
+            // 2. Fetch sent campaigns basic info
             const { data: campaignData } = await supabase
                 .from('email_campaigns')
-                .select('id, name, subject, status, sent_at, total_sent, total_opens, total_clicks, total_bounces')
+                .select('id, name, subject, status, sent_at, total_sent')
                 .eq('status', 'sent')
                 .order('sent_at', { ascending: false })
                 .limit(10)
 
-            setCampaigns(campaignData || [])
+            // 3. Fetch actual event counts from email_events table
+            const { data: allEvents } = await supabase
+                .from('email_events')
+                .select('campaign_id, contact_id, event_type')
 
-            // 3. Calculate aggregate stats
+            // Calculate per-campaign stats from events
+            const campaignStats = new Map<string, { opens: number, clicks: number, uniqueOpens: Set<string>, uniqueClicks: Set<string> }>()
+            for (const event of allEvents || []) {
+                if (!campaignStats.has(event.campaign_id)) {
+                    campaignStats.set(event.campaign_id, { opens: 0, clicks: 0, uniqueOpens: new Set(), uniqueClicks: new Set() })
+                }
+                const stats = campaignStats.get(event.campaign_id)!
+                if (event.event_type === 'opened') {
+                    stats.opens++
+                    if (event.contact_id) stats.uniqueOpens.add(event.contact_id)
+                }
+                if (event.event_type === 'clicked') {
+                    stats.clicks++
+                    if (event.contact_id) stats.uniqueClicks.add(event.contact_id)
+                }
+            }
+
+            // Merge stats into campaign data
+            const campaignsWithStats = (campaignData || []).map(c => {
+                const eventStats = campaignStats.get(c.id)
+                return {
+                    ...c,
+                    total_opens: eventStats?.uniqueOpens.size || 0,
+                    total_clicks: eventStats?.uniqueClicks.size || 0,
+                    total_bounces: 0
+                }
+            })
+
+            setCampaigns(campaignsWithStats)
+
+            // 4. Calculate aggregate stats from live event data
             let totalOpens = 0
             let totalClicks = 0
             let totalSent = 0
-            for (const c of campaignData || []) {
+            for (const c of campaignsWithStats) {
                 totalOpens += c.total_opens || 0
                 totalClicks += c.total_clicks || 0
                 totalSent += c.total_sent || 0
