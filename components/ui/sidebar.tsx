@@ -26,6 +26,8 @@ const navItems = [
 ]
 
 const devTools = [
+    { href: '/admin/tools/tracking-debugger', label: 'Tracking Debugger', icon: BarChart3 },
+    { href: '/admin/tools/email-debugger', label: 'Email Debugger', icon: Mail },
     { href: '/admin/tools/webhook-tester', label: 'Webhook Tester', icon: Wrench },
 ]
 
