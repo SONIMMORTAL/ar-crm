@@ -21,26 +21,31 @@ export async function GET(
         }
 
         // 2. Calculate derived rates
+        const totalSent = campaign.total_sent || 0
+        const uniqueOpens = campaign.unique_opens || 0
+        const uniqueClicks = campaign.unique_clicks || 0
+        const totalBounces = campaign.total_bounces || 0
+
         const stats = {
-            total_sent: campaign.total_sent || 0,
+            total_sent: totalSent,
             total_opens: campaign.total_opens || 0,
-            unique_opens: campaign.unique_opens || 0,
+            unique_opens: uniqueOpens,
             total_clicks: campaign.total_clicks || 0,
-            unique_clicks: campaign.unique_clicks || 0,
-            total_bounces: campaign.total_bounces || 0,
+            unique_clicks: uniqueClicks,
+            total_bounces: totalBounces,
             total_complaints: campaign.total_complaints || 0,
             // Calculated rates
-            open_rate: campaign.total_sent > 0
-                ? ((campaign.unique_opens || 0) / campaign.total_sent * 100).toFixed(1)
+            open_rate: totalSent > 0
+                ? (uniqueOpens / totalSent * 100).toFixed(1)
                 : 0,
-            click_rate: campaign.unique_opens > 0
-                ? ((campaign.unique_clicks || 0) / (campaign.unique_opens || 1) * 100).toFixed(1)
+            click_rate: uniqueOpens > 0
+                ? (uniqueClicks / uniqueOpens * 100).toFixed(1)
                 : 0,
-            bounce_rate: campaign.total_sent > 0
-                ? ((campaign.total_bounces || 0) / campaign.total_sent * 100).toFixed(1)
+            bounce_rate: totalSent > 0
+                ? (totalBounces / totalSent * 100).toFixed(1)
                 : 0,
-            delivery_rate: campaign.total_sent > 0
-                ? (((campaign.total_sent || 0) - (campaign.total_bounces || 0)) / campaign.total_sent * 100).toFixed(1)
+            delivery_rate: totalSent > 0
+                ? ((totalSent - totalBounces) / totalSent * 100).toFixed(1)
                 : 0
         }
 
