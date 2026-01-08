@@ -1,14 +1,4 @@
 {
-    "cron": [
-        {
-            "path": "/api/sync/mailchimp/audience",
-            "schedule": "0 0 * * *"
-        },
-        {
-            "path": "/api/sync/nationbuilder/contact",
-            "schedule": "0 1 * * *"
-        }
-    ],
     "headers": [
         {
             "source": "/(.*)",
