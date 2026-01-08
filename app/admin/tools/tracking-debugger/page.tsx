@@ -78,7 +78,7 @@ export default function TrackingDebugger() {
                     <div className="p-4 bg-green-900/30 border border-green-500 rounded text-green-100">
                         <h3 className="font-bold">Success! Table Exists.</h3>
                         <p>Total Events: {counts}</p>
-                        <p className="text-sm opacity-70 mt-1">If events > 0, tracking is recording.</p>
+                        <p className="text-sm opacity-70 mt-1">If events &gt; 0, tracking is recording.</p>
                     </div>
                 )}
             </div>
