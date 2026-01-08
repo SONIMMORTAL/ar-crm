@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@supabase/supabase-js'
 
 export default function TrackingDebugger() {
@@ -8,9 +8,13 @@ export default function TrackingDebugger() {
     const [error, setError] = useState<string | null>(null)
     const [loading, setLoading] = useState(false)
     const [counts, setCounts] = useState<any>(null)
+    const [baseUrl, setBaseUrl] = useState<string>('')
 
-    // Using client-side supabase just to test connection/table existence
-    // We assume the user is logged in as admin who has select rights
+    // Get the actual runtime URL (not the build-time env var)
+    useEffect(() => {
+        setBaseUrl(window.location.origin)
+    }, [])
+
     const supabase = createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -20,11 +24,11 @@ export default function TrackingDebugger() {
         setLoading(true)
         setError(null)
         try {
-            // Check if table exists by selecting 1 row
             const { data, error } = await supabase
                 .from('email_events')
                 .select('*')
-                .limit(5)
+                .order('timestamp', { ascending: false })
+                .limit(10)
 
             if (error) {
                 setError(`Table Check Failed: ${error.message} (${error.code})`)
@@ -33,7 +37,6 @@ export default function TrackingDebugger() {
 
             setEvents(data || [])
 
-            // Get counts
             const { count } = await supabase
                 .from('email_events')
                 .select('*', { count: 'exact', head: true })
@@ -46,6 +49,8 @@ export default function TrackingDebugger() {
             setLoading(false)
         }
     }
+
+    const pixelUrl = baseUrl ? `${baseUrl}/api/track/open?cid=TEST_CAMPAIGN&uid=TEST_USER` : ''
 
     return (
         <div className="p-8 space-y-6">
@@ -108,8 +113,8 @@ export default function TrackingDebugger() {
                                             {e.event_type}
                                         </span>
                                     </td>
-                                    <td className="p-3 font-mono text-xs">{e.campaign_id}</td>
-                                    <td className="p-3 font-mono text-xs">{e.contact_id}</td>
+                                    <td className="p-3 font-mono text-xs">{e.campaign_id?.substring(0, 8)}...</td>
+                                    <td className="p-3 font-mono text-xs">{e.contact_id?.substring(0, 8)}...</td>
                                     <td className="p-3 font-mono text-xs max-w-xs truncate">
                                         {JSON.stringify(e.event_data)}
                                     </td>
@@ -134,16 +139,16 @@ export default function TrackingDebugger() {
                     This simulates an email open.
                 </p>
                 <div className="p-3 bg-black rounded border border-slate-700 font-mono text-xs break-all">
-                    {process.env.NEXT_PUBLIC_APP_URL ? (
+                    {baseUrl ? (
                         <a
-                            href={`${process.env.NEXT_PUBLIC_APP_URL}/api/track/open?cid=TEST_CAMPAIGN&uid=TEST_USER`}
+                            href={pixelUrl}
                             target="_blank"
                             className="text-blue-400 hover:underline"
                         >
-                            {process.env.NEXT_PUBLIC_APP_URL}/api/track/open?cid=TEST_CAMPAIGN&uid=TEST_USER
+                            {pixelUrl}
                         </a>
                     ) : (
-                        <span className="text-red-500">NEXT_PUBLIC_APP_URL is not set</span>
+                        <span className="text-slate-500">Loading URL...</span>
                     )}
                 </div>
                 <p className="text-xs text-slate-500">
@@ -152,10 +157,11 @@ export default function TrackingDebugger() {
                 </p>
             </div>
 
-            <div className="p-4 text-xs text-slate-500 font-mono">
-                Environment URL: {process.env.NEXT_PUBLIC_APP_URL || '(not set)'}
+            <div className="p-4 text-xs text-slate-500 font-mono space-y-1">
+                <div>Runtime URL: <span className="text-green-400">{baseUrl || 'detecting...'}</span></div>
+                <div>Env Var URL: <span className="text-yellow-400">{process.env.NEXT_PUBLIC_APP_URL || '(not set)'}</span></div>
                 <div className="mt-2 text-yellow-500">
-                    If counts {'>'} 0 but analytics is 0%, check RLS policies.
+                    If counts &gt; 0 but analytics is 0%, check RLS policies.
                 </div>
             </div>
         </div>
