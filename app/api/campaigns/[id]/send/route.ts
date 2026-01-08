@@ -2,23 +2,30 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendBatchEmails } from '@/lib/email-service'
 
-// Generate tracking pixel URL
-// Generate tracking pixel URL
-function getTrackingPixel(campaignId: string, contactId: string): string {
-    let baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+// Get base URL from request headers (works correctly on Vercel)
+function getBaseUrlFromRequest(req: NextRequest): string {
+    const host = req.headers.get('host') || req.headers.get('x-forwarded-host')
+    const protocol = req.headers.get('x-forwarded-proto') || 'https'
 
-    // Robustness: Handle users pasting full URLs with paths (e.g. /admin/dashboard)
+    if (host) {
+        return `${protocol}://${host}`
+    }
+
+    // Fallback to env var with sanitization
+    let baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
     try {
         if (!baseUrl.startsWith('http')) {
             baseUrl = `https://${baseUrl}`
         }
         const url = new URL(baseUrl)
-        baseUrl = url.origin // Returns just https://domain.com without trailing slash or path
-    } catch (e) {
-        // If invalid URL, fallback to raw value but trim trailing slash
-        baseUrl = baseUrl.replace(/\/$/, '')
+        return url.origin
+    } catch {
+        return baseUrl.replace(/\/$/, '')
     }
+}
 
+// Generate tracking pixel URL
+function getTrackingPixel(baseUrl: string, campaignId: string, contactId: string): string {
     return `<img src="${baseUrl}/api/track/open?cid=${campaignId}&uid=${contactId}" width="1" height="1" style="display:none;" alt="" />`
 }
 
@@ -72,6 +79,10 @@ export async function POST(
             return NextResponse.json({ error: 'No valid contacts found to send to.' }, { status: 400 })
         }
 
+        // Get base URL from request for tracking pixels
+        const baseUrl = getBaseUrlFromRequest(req)
+        console.log('[Send] Using base URL for tracking:', baseUrl)
+
         // 3. Prepare emails for batch sending
         const emailsToSend = contacts.map(contact => {
             // Personalize (Basic Merge Tags)
@@ -82,7 +93,7 @@ export async function POST(
                 .replace(/{{email}}/g, contact.email || '')
 
             // Add tracking pixel before closing body tag
-            const trackingPixel = getTrackingPixel(campaign.id, contact.id)
+            const trackingPixel = getTrackingPixel(baseUrl, campaign.id, contact.id)
             if (personalizedBody.includes('</body>')) {
                 personalizedBody = personalizedBody.replace('</body>', `${trackingPixel}</body>`)
             } else {
