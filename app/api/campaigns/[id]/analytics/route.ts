@@ -9,7 +9,7 @@ export async function GET(
     const supabase = createAdminClient()
 
     try {
-        // 1. Fetch Campaign with stats
+        // 1. Fetch Campaign basic info
         const { data: campaign, error: campError } = await supabase
             .from('email_campaigns')
             .select('*')
@@ -20,21 +20,35 @@ export async function GET(
             return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
         }
 
-        // 2. Calculate derived rates
+        // 2. Fetch ALL events for this campaign to calculate accurate stats
+        const { data: allEvents } = await supabase
+            .from('email_events')
+            .select('contact_id, event_type, timestamp')
+            .eq('campaign_id', id)
+
+        // Calculate stats from actual events
         const totalSent = campaign.total_sent || 0
-        const uniqueOpens = campaign.unique_opens || 0
-        const uniqueClicks = campaign.unique_clicks || 0
-        const totalBounces = campaign.total_bounces || 0
+        const totalBounces = allEvents?.filter(e => e.event_type === 'bounced').length || 0
+        const totalComplaints = allEvents?.filter(e => e.event_type === 'complained').length || 0
+
+        // Count unique contacts per event type
+        const openedContacts = new Set(allEvents?.filter(e => e.event_type === 'opened').map(e => e.contact_id) || [])
+        const clickedContacts = new Set(allEvents?.filter(e => e.event_type === 'clicked').map(e => e.contact_id) || [])
+
+        const uniqueOpens = openedContacts.size
+        const uniqueClicks = clickedContacts.size
+        const totalOpens = allEvents?.filter(e => e.event_type === 'opened').length || 0
+        const totalClicks = allEvents?.filter(e => e.event_type === 'clicked').length || 0
 
         const stats = {
             total_sent: totalSent,
-            total_opens: campaign.total_opens || 0,
+            total_opens: totalOpens,
             unique_opens: uniqueOpens,
-            total_clicks: campaign.total_clicks || 0,
+            total_clicks: totalClicks,
             unique_clicks: uniqueClicks,
             total_bounces: totalBounces,
-            total_complaints: campaign.total_complaints || 0,
-            // Calculated rates
+            total_complaints: totalComplaints,
+            // Calculated rates from LIVE event data
             open_rate: totalSent > 0
                 ? (uniqueOpens / totalSent * 100).toFixed(1)
                 : 0,
