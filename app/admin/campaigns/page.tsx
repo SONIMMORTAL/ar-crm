@@ -42,14 +42,49 @@ export default function CampaignsPage() {
     }, [mounted])
 
     async function fetchCampaigns() {
+        // Fetch campaigns
         const { data, error } = await supabase
             .from('email_campaigns')
             .select('*')
             .order('created_at', { ascending: false })
 
-        if (!error && data) {
-            setCampaigns(data)
+        if (error) {
+            setLoading(false)
+            return
         }
+
+        // Fetch actual event counts from email_events table
+        const { data: allEvents } = await supabase
+            .from('email_events')
+            .select('campaign_id, contact_id, event_type')
+
+        // Calculate per-campaign stats from events
+        const campaignStats = new Map<string, { uniqueOpens: Set<string>, uniqueClicks: Set<string> }>()
+        for (const event of allEvents || []) {
+            if (!event.campaign_id) continue
+            if (!campaignStats.has(event.campaign_id)) {
+                campaignStats.set(event.campaign_id, { uniqueOpens: new Set(), uniqueClicks: new Set() })
+            }
+            const stats = campaignStats.get(event.campaign_id)!
+            if (event.event_type === 'opened' && event.contact_id) {
+                stats.uniqueOpens.add(event.contact_id)
+            }
+            if (event.event_type === 'clicked' && event.contact_id) {
+                stats.uniqueClicks.add(event.contact_id)
+            }
+        }
+
+        // Merge stats into campaign data
+        const campaignsWithStats = (data || []).map(c => {
+            const eventStats = campaignStats.get(c.id)
+            return {
+                ...c,
+                total_opens: eventStats?.uniqueOpens.size || 0,
+                total_clicks: eventStats?.uniqueClicks.size || 0
+            }
+        })
+
+        setCampaigns(campaignsWithStats)
         setLoading(false)
     }
 
@@ -168,10 +203,10 @@ export default function CampaignsPage() {
                                         <div className="flex items-center gap-6">
                                             {/* Icon */}
                                             <div className={`p-3 rounded-xl ${campaign.status === 'sent'
-                                                    ? 'bg-gradient-to-br from-emerald-500 to-green-600'
-                                                    : campaign.status === 'testing'
-                                                        ? 'bg-gradient-to-br from-amber-500 to-orange-600'
-                                                        : 'bg-gradient-to-br from-slate-400 to-slate-500'
+                                                ? 'bg-gradient-to-br from-emerald-500 to-green-600'
+                                                : campaign.status === 'testing'
+                                                    ? 'bg-gradient-to-br from-amber-500 to-orange-600'
+                                                    : 'bg-gradient-to-br from-slate-400 to-slate-500'
                                                 } shadow-lg`}>
                                                 <Mail className="w-5 h-5 text-white" />
                                             </div>
