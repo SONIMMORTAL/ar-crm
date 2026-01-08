@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { sendEmail } from '@/lib/email-service'
+import { sendBatchEmails } from '@/lib/email-service'
+
+// Generate tracking pixel URL
+function getTrackingPixel(campaignId: string, contactId: string): string {
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    return `<img src="${baseUrl}/api/track/open?cid=${campaignId}&uid=${contactId}" width="1" height="1" style="display:none;" alt="" />`
+}
 
 export async function POST(
     req: NextRequest,
@@ -26,78 +32,132 @@ export async function POST(
         }
 
         // 2. Fetch Audience (All Contacts for now)
-        const { data: contacts, error: contactsError } = await supabase
+        const { data: allContacts, error: contactsError } = await supabase
             .from('contacts')
             .select('id, email, first_name, last_name')
             .eq('unsubscribed', false)
 
         if (contactsError) throw contactsError
-        if (!contacts || contacts.length === 0) {
-            return NextResponse.json({ error: 'No contacts found to send to.' }, { status: 400 })
-        }
 
-        // 3. Update Status to 'sending' (or 'sent' immediately since we process in-band for MVP)
-        // NOTE: For thousands of emails, we'd offload to a queue (Inngest/BullMQ).
-        // For MVP (Day 4), we'll stream/batch process in the function or just process small list.
-        // Let's assume < 100 contacts for now and process in loop.
+        // Filter out any invalid email domains
+        const contacts = (allContacts || []).filter(c => {
+            const email = c.email?.toLowerCase() || ''
 
-        let sentCount = 0
-        let failCount = 0
-        const errors = []
-
-        // 4. Send Loop (Simulated Batching)
-        for (const contact of contacts) {
-            try {
-                // Personalize (Basic Merge Tags)
-                let personalizedBody = campaign.body_html || ''
-                personalizedBody = personalizedBody
-                    .replace(/{{first_name}}/g, contact.first_name || '')
-                    .replace(/{{last_name}}/g, contact.last_name || '')
-                    .replace(/{{email}}/g, contact.email || '')
-
-                // Send (using existing email-service wrapper)
-                await sendEmail({
-                    to: contact.email,
-                    subject: campaign.subject,
-                    html: personalizedBody,
-                    // from: campaign.from_email (we might need to update email-service to support custom from)
-                })
-
-                // Log Event
-                // In a real high-throughput system, we'd batch these inserts too.
-                await supabase.from('email_events').insert({
-                    campaign_id: campaign.id,
-                    contact_id: contact.id,
-                    event_type: 'sent',
-                    timestamp: new Date().toISOString()
-                })
-
-                sentCount++
-            } catch (err) {
-                console.error(`Failed to send to ${contact.email}`, err)
-                failCount++
-                errors.push({ email: contact.email, error: String(err) })
+            // Skip invalid domains
+            if (email.includes('@example.com') || email.includes('@test.com') || !email.includes('@')) {
+                console.log('Skipping invalid email:', c.email)
+                return false
             }
 
-            // Throttle (50ms) to avoid rate limits
-            await new Promise(r => setTimeout(r, 50))
+            return true
+        })
+
+        console.log('Sending to contacts:', contacts.map(c => c.email))
+
+        if (!contacts || contacts.length === 0) {
+            return NextResponse.json({ error: 'No valid contacts found to send to.' }, { status: 400 })
+        }
+
+        // 3. Prepare emails for batch sending
+        const emailsToSend = contacts.map(contact => {
+            // Personalize (Basic Merge Tags)
+            let personalizedBody = campaign.body_html || '<p>No content provided.</p>'
+            personalizedBody = personalizedBody
+                .replace(/{{first_name}}/g, contact.first_name || '')
+                .replace(/{{last_name}}/g, contact.last_name || '')
+                .replace(/{{email}}/g, contact.email || '')
+
+            // Add tracking pixel before closing body tag
+            const trackingPixel = getTrackingPixel(campaign.id, contact.id)
+            if (personalizedBody.includes('</body>')) {
+                personalizedBody = personalizedBody.replace('</body>', `${trackingPixel}</body>`)
+            } else {
+                personalizedBody = `${personalizedBody}${trackingPixel}`
+            }
+
+            return {
+                to: contact.email,
+                subject: campaign.subject || 'No Subject',
+                html: personalizedBody,
+                tags: [{ name: 'campaign_id', value: campaign.id }]
+            }
+        })
+
+        // 4. Send in batches of 100 (Resend limit)
+        let sentCount = 0
+        let failCount = 0
+        const errors: { batch: number; error: string }[] = []
+        const messageIds: string[] = []
+
+        const BATCH_SIZE = 100
+        const batches = []
+        for (let i = 0; i < emailsToSend.length; i += BATCH_SIZE) {
+            batches.push({
+                emails: emailsToSend.slice(i, i + BATCH_SIZE),
+                contacts: contacts.slice(i, i + BATCH_SIZE)
+            })
+        }
+
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+            const batch = batches[batchIndex]
+            console.log(`Sending batch ${batchIndex + 1}/${batches.length} (${batch.emails.length} emails)`)
+
+            const result = await sendBatchEmails(batch.emails)
+
+            // Process results
+            const eventsToInsert: any[] = []
+
+            result.items.forEach((item, index) => {
+                const contact = batch.contacts.find(c => c.email === item.to) || batch.contacts[index]
+
+                if (item.status === 'sent') {
+                    sentCount++
+                    if (contact) {
+                        eventsToInsert.push({
+                            campaign_id: campaign.id,
+                            contact_id: contact.id,
+                            event_type: 'sent',
+                            event_data: { message_id: item.messageId || 'unknown' },
+                            timestamp: new Date().toISOString()
+                        })
+                    }
+                } else {
+                    failCount++
+                    errors.push({ batch: batchIndex, error: `${item.to}: ${item.error || 'Failed'}` })
+                    console.error(`Failed to send to ${item.to}: ${item.error}`)
+                }
+            })
+
+            if (eventsToInsert.length > 0) {
+                await supabase.from('email_events').insert(eventsToInsert)
+            }
+
+            // Small delay between batches if there are multiple
+            if (batchIndex < batches.length - 1) {
+                await new Promise(r => setTimeout(r, 1000))
+            }
         }
 
         // 5. Update Campaign Stats
-        await supabase
-            .from('email_campaigns')
-            .update({
-                status: 'sent',
-                sent_at: new Date().toISOString(),
-                total_sent: sentCount
-            })
-            .eq('id', campaign.id)
+        if (sentCount > 0) {
+            await supabase
+                .from('email_campaigns')
+                .update({
+                    status: 'sent',
+                    sent_at: new Date().toISOString(),
+                    total_sent: sentCount
+                })
+                .eq('id', campaign.id)
+        } else {
+            console.log('Campaign failed to send to any recipients. Keeping status as draft.')
+        }
 
         return NextResponse.json({
             success: true,
             total: contacts.length,
             sent: sentCount,
-            failed: failCount
+            failed: failCount,
+            errors: errors.length > 0 ? errors : undefined
         })
 
     } catch (err) {

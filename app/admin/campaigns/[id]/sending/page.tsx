@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
-import { Loader2, CheckCircle, AlertOctagon, ArrowLeft } from 'lucide-react'
+import { Loader2, CheckCircle, AlertOctagon, ArrowLeft, FileText } from 'lucide-react'
 import { Database } from '@/types/database'
 
 type Campaign = Database['public']['Tables']['email_campaigns']['Row']
@@ -126,9 +126,15 @@ export default function SendingPage() {
                         </div>
                     )}
 
-                    <div className="flex justify-center pt-4">
+                    <div className="flex flex-col gap-3 justify-center pt-4">
+                        {status === 'completed' && (
+                            <Button onClick={() => router.push(`/admin/campaigns/${id}/report`)} className="w-full bg-blue-600 hover:bg-blue-700">
+                                <FileText className="w-4 h-4 mr-2" /> View Detailed Report
+                            </Button>
+                        )}
+
                         {status === 'completed' || status === 'error' ? (
-                            <Button onClick={() => router.push('/admin/campaigns')}>
+                            <Button variant="outline" onClick={() => router.push('/admin/campaigns')} className="w-full">
                                 <ArrowLeft className="w-4 h-4 mr-2" /> Back to Dashboard
                             </Button>
                         ) : (

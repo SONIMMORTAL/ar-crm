@@ -121,8 +121,11 @@ export interface Database {
           subject: string
           total_bounces: number | null
           total_clicks: number | null
+          total_complaints: number | null
           total_opens: number | null
           total_sent: number | null
+          unique_clicks: number | null
+          unique_opens: number | null
           updated_at: string
         }
         Insert: {
@@ -139,8 +142,11 @@ export interface Database {
           subject: string
           total_bounces?: number | null
           total_clicks?: number | null
+          total_complaints?: number | null
           total_opens?: number | null
           total_sent?: number | null
+          unique_clicks?: number | null
+          unique_opens?: number | null
           updated_at?: string
         }
         Update: {
@@ -157,8 +163,11 @@ export interface Database {
           subject?: string
           total_bounces?: number | null
           total_clicks?: number | null
+          total_complaints?: number | null
           total_opens?: number | null
           total_sent?: number | null
+          unique_clicks?: number | null
+          unique_opens?: number | null
           updated_at?: string
         }
         Relationships: []
@@ -244,6 +253,43 @@ export interface Database {
           updated_at?: string
         }
         Relationships: []
+      }
+      email_link_clicks: {
+        Row: {
+          id: string
+          campaign_id: string
+          contact_id: string
+          link_url: string
+          clicked_at: string
+        }
+        Insert: {
+          id?: string
+          campaign_id: string
+          contact_id: string
+          link_url: string
+          clicked_at?: string
+        }
+        Update: {
+          id?: string
+          campaign_id?: string
+          contact_id?: string
+          link_url?: string
+          clicked_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "email_link_clicks_campaign_id_fkey"
+            columns: ["campaign_id"]
+            referencedRelation: "email_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "email_link_clicks_contact_id_fkey"
+            columns: ["contact_id"]
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          }
+        ]
       }
       sync_logs: {
         Row: {

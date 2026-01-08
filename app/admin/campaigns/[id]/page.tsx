@@ -274,7 +274,21 @@ export default function EditCampaignPage() {
                                                 {testResult ? 'View Test Report' : 'Test Deliverability'}
                                             </Button>
                                             <Button
-                                                onClick={() => router.push(`/admin/campaigns/${id}/sending`)}
+                                                onClick={async () => {
+                                                    // Auto-save before sending
+                                                    await supabase
+                                                        .from('email_campaigns')
+                                                        .update({
+                                                            name: formData.name,
+                                                            subject: formData.subject,
+                                                            from_name: formData.from_name || null,
+                                                            from_email: formData.from_email || null,
+                                                            body_html: formData.body_html,
+                                                            updated_at: new Date().toISOString()
+                                                        })
+                                                        .eq('id', id)
+                                                    router.push(`/admin/campaigns/${id}/sending`)
+                                                }}
                                                 className="gap-2 bg-blue-600 hover:bg-blue-700 text-white"
                                             >
                                                 <Send className="w-4 h-4" /> Send Now

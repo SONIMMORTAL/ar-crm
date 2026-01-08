@@ -54,7 +54,17 @@ export async function updateSession(request: NextRequest) {
         }
     )
 
-    await supabase.auth.getUser()
+    const { data: { user }, error } = await supabase.auth.getUser()
+
+    // Protected Routes Logic
+    if (request.nextUrl.pathname.startsWith('/admin') && !user) {
+        return NextResponse.redirect(new URL('/auth/login', request.url))
+    }
+
+    // Optional: Redirect logged in users away from login page?
+    if (request.nextUrl.pathname.startsWith('/auth/login') && user) {
+        return NextResponse.redirect(new URL('/admin/dashboard', request.url))
+    }
 
     return response
 }
