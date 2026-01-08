@@ -113,7 +113,7 @@ export default function TrackingDebugger() {
                                     <td className="p-3 font-mono text-xs max-w-xs truncate">
                                         {JSON.stringify(e.event_data)}
                                     </td>
-                                </div>
+                                </tr>
                             ))}
                             {events.length === 0 && !error && (
                                 <tr>
