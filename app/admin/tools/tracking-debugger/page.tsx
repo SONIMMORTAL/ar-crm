@@ -127,8 +127,36 @@ export default function TrackingDebugger() {
                 </div>
             </div>
 
+            <div className="bg-slate-900 p-4 rounded-lg space-y-4">
+                <h2 className="text-xl font-semibold">Pixel Tester</h2>
+                <p className="text-sm text-slate-400">
+                    Click the link below to verify if the tracking endpoint is reachable.
+                    This simulates an email open.
+                </p>
+                <div className="p-3 bg-black rounded border border-slate-700 font-mono text-xs break-all">
+                    {process.env.NEXT_PUBLIC_APP_URL ? (
+                        <a
+                            href={`${process.env.NEXT_PUBLIC_APP_URL}/api/track/open?cid=TEST_CAMPAIGN&uid=TEST_USER`}
+                            target="_blank"
+                            className="text-blue-400 hover:underline"
+                        >
+                            {process.env.NEXT_PUBLIC_APP_URL}/api/track/open?cid=TEST_CAMPAIGN&uid=TEST_USER
+                        </a>
+                    ) : (
+                        <span className="text-red-500">NEXT_PUBLIC_APP_URL is not set</span>
+                    )}
+                </div>
+                <p className="text-xs text-slate-500">
+                    After clicking, check the table above. You should see a new 'opened' event for 'TEST_CAMPAIGN'.
+                    (Refresh the list using the 'Check email_events Table' button).
+                </p>
+            </div>
+
             <div className="p-4 text-xs text-slate-500 font-mono">
                 Environment URL: {process.env.NEXT_PUBLIC_APP_URL || '(not set)'}
+                <div className="mt-2 text-yellow-500">
+                    If counts {'>'} 0 but analytics is 0%, check RLS policies.
+                </div>
             </div>
         </div>
     )
